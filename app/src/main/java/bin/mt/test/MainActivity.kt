@@ -1,143 +1,156 @@
-package bin.mt.test;
+package bin.mt.test
 
-import android.annotation.SuppressLint;
-import android.app.Activity;
-import android.app.Application;
-import android.content.Context;
-import android.content.pm.PackageInfo;
-import android.content.pm.PackageManager;
-import android.graphics.Color;
-import android.os.Bundle;
-import android.os.ParcelFileDescriptor;
-import android.text.SpannableStringBuilder;
-import android.text.Spanned;
-import android.text.style.ForegroundColorSpan;
-import android.widget.TextView;
-
-import java.io.FileInputStream;
-import java.io.InputStream;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.security.cert.CertificateFactory;
-import java.security.cert.X509Certificate;
-import java.util.Enumeration;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipFile;
-import java.util.zip.ZipInputStream;
-
-public class MainActivity extends Activity {
-
-    public static class App extends Application {
-        static {
-            new bin.mt.signature.KillerApplication(); // 注释掉这句即可关闭过签
-        }
+import android.annotation.SuppressLint
+import android.app.Activity
+import android.app.Application
+import android.content.Context
+import android.content.pm.PackageManager
+import android.graphics.Color
+import android.os.Bundle
+import android.os.ParcelFileDescriptor
+import android.text.SpannableStringBuilder
+import android.text.Spanned
+import android.text.style.ForegroundColorSpan
+import android.util.Log
+import android.util.Log.e
+import android.widget.TextView
+import bin.mt.signature.KillerApplication
+import bin.mt.test.MainActivity.Companion.append
+import bin.mt.test.MainActivity.Companion.openAt
+import java.io.FileInputStream
+import java.io.InputStream
+import java.math.BigInteger
+import java.security.MessageDigest
+import java.security.NoSuchAlgorithmException
+import java.security.cert.CertificateFactory
+import java.security.cert.X509Certificate
+import java.util.Enumeration
+import java.util.zip.ZipEntry
+import java.util.zip.ZipFile
+import java.util.zip.ZipInputStream
+class App : Application() {
+    init {
+        KillerApplication() // 注释掉这句即可关闭过签
     }
+}
+open class MainActivity : Activity() {
 
-    static {
-        System.loadLibrary("test");
-    }
 
-    @SuppressLint("SetTextI18n")
-    @Override
-    protected void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
-        setContentView(R.layout.activity_main);
-        TextView msg = findViewById(R.id.msg);
+    @SuppressLint("SetTextI18n") override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_main)
+        val msg = findViewById<TextView>(R.id.msg)
 
         // 以下演示了三种获取签名MD5的方式
-
-        String signatureExpected = "3bf8931788824c6a1f2c6f6ff80f6b21";
-        String signatureFromAPI = md5(signatureFromAPI());
-        String signatureFromAPK = md5(signatureFromAPK());
-        String signatureFromSVC = md5(signatureFromSVC());
+        val signatureExpected = "3bf8931788824c6a1f2c6f6ff80f6b21"//原始签名MD5
+        val signatureFromAPI = md5(signatureFromAPI())
+        val signatureFromAPK = md5(signatureFromAPK())
+        val signatureFromSVC = md5(signatureFromSVC())
+        val signatureFromSVCNative = md5(svc(this))
 
         // 开启过签后，API与APK方式会获取到虚假的签名MD5
 
         // 而SVC方式总是能获取到真实的签名MD5
-
-        SpannableStringBuilder sb = new SpannableStringBuilder();
-        append(sb, "Expected: ", signatureExpected, Color.BLACK);
-        append(sb, "From API: ", signatureFromAPI, signatureExpected.equals(signatureFromAPI) ? Color.BLUE : Color.RED);
-        append(sb, "From APK: ", signatureFromAPK, signatureExpected.equals(signatureFromAPK) ? Color.BLUE : Color.RED);
-        append(sb, "From SVC: ", signatureFromSVC, signatureExpected.equals(signatureFromSVC) ? Color.BLUE : Color.RED);
+        val sb = SpannableStringBuilder()
+        append(sb, "Expected: ", signatureExpected, Color.BLACK)
+        append(sb, "From API: ", signatureFromAPI, if (signatureExpected == signatureFromAPI) Color.BLUE else Color.RED)
+        append(sb, "From APK: ", signatureFromAPK, if (signatureExpected == signatureFromAPK) Color.BLUE else Color.RED)
+        append(sb, "From SVC: ", signatureFromSVC, if (signatureExpected == signatureFromSVC) Color.BLUE else Color.RED)
+        append(sb, "From SVC_native: ", signatureFromSVCNative, if (signatureExpected == signatureFromSVCNative) Color.BLUE else Color.RED)
 
         // 当然SVC并非绝对安全，只是相对而言更加可靠，实际运用还需结合更多的手段
+        msg.setText(sb)
 
-        msg.setText(sb);
+        svce(this)
     }
 
-    private static void append(SpannableStringBuilder sb, String header, String value, int color) {
-        int start = sb.length();
-        sb.append(header).append(value).append("\n");
-        int end = sb.length();
-        sb.setSpan(new ForegroundColorSpan(color), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-    }
-
-    private byte[] signatureFromAPI() {
+    @Throws(RuntimeException::class)
+    private fun signatureFromAPI(): ByteArray? {
         try {
             @SuppressLint("PackageManagerGetSignatures")
-            PackageInfo info = getPackageManager().getPackageInfo(getPackageName(), PackageManager.GET_SIGNATURES);
-            return info.signatures[0].toByteArray();
-        } catch (PackageManager.NameNotFoundException e) {
-            throw new RuntimeException(e);
+            val info = packageManager.getPackageInfo(packageName, PackageManager.GET_SIGNATURES)
+            return info?.signatures?.getOrNull(0)?.toByteArray()
+        } catch (e: PackageManager.NameNotFoundException) {
+            throw RuntimeException(e)
         }
     }
 
-    private byte[] signatureFromAPK() {
-        try (ZipFile zipFile = new ZipFile(getPackageResourcePath())) {
-            Enumeration<? extends ZipEntry> entries = zipFile.entries();
-            while (entries.hasMoreElements()) {
-                ZipEntry entry = entries.nextElement();
-                if (entry.getName().matches("(META-INF/.*)\\.(RSA|DSA|EC)")) {
-                    InputStream is = zipFile.getInputStream(entry);
-                    CertificateFactory certFactory = CertificateFactory.getInstance("X509");
-                    X509Certificate x509Cert = (X509Certificate) certFactory.generateCertificate(is);
-                    return x509Cert.getEncoded();
+    private fun signatureFromAPK(): ByteArray? {
+        try {
+            ZipFile(packageResourcePath).use { zipFile ->
+                val entries: Enumeration<out ZipEntry> = zipFile.entries()
+                while (entries.hasMoreElements()) {
+                    val entry: ZipEntry = entries.nextElement()
+                    if (entry.getName().matches("(META-INF/.*)\\.(RSA|DSA|EC)".toRegex())) {
+                        val ips: InputStream? = zipFile.getInputStream(entry)
+                        val certFactory = CertificateFactory.getInstance("X509")
+                        val x509Cert = certFactory.generateCertificate(ips) as X509Certificate
+                        return x509Cert.getEncoded()
+                    }
                 }
             }
-        } catch (Exception e) {
-            e.printStackTrace();
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
-        return null;
+        return null
     }
 
-    private byte[] signatureFromSVC() {
-        try (ParcelFileDescriptor fd = ParcelFileDescriptor.adoptFd(openAt(getPackageResourcePath()));
-             ZipInputStream zis = new ZipInputStream(new FileInputStream(fd.getFileDescriptor()))) {
-            ZipEntry entry;
-            while ((entry = zis.getNextEntry()) != null) {
-                if (entry.getName().matches("(META-INF/.*)\\.(RSA|DSA|EC)")) {
-                    CertificateFactory certFactory = CertificateFactory.getInstance("X509");
-                    X509Certificate x509Cert = (X509Certificate) certFactory.generateCertificate(zis);
-                    return x509Cert.getEncoded();
+    private fun signatureFromSVC(): ByteArray? {
+        try {
+            ParcelFileDescriptor.adoptFd(openAt(packageResourcePath)).use { fd ->
+                ZipInputStream(FileInputStream(fd.fileDescriptor)).use { zis ->
+                    var entry: ZipEntry?
+                    while ((zis.getNextEntry().also { entry = it }) != null) {
+                        if (entry!!.getName().matches("(META-INF/.*)\\.(RSA|DSA|EC)".toRegex())) {
+                            val certFactory = CertificateFactory.getInstance("X509")
+                            val x509Cert = certFactory.generateCertificate(zis) as X509Certificate
+                            return x509Cert.encoded
+                        }
+                    }
                 }
             }
-        } catch (Exception e) {
-            e.printStackTrace();
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
-        return null;
+        return null
     }
 
 
-    private String md5(byte[] bytes) {
+    private fun md5(bytes: ByteArray?): String {
         if (bytes == null) {
-            return "null";
+            return "null"
         }
         try {
-            byte[] digest = MessageDigest.getInstance("MD5").digest(bytes);
-            String hexDigits = "0123456789abcdef";
-            char[] str = new char[digest.length * 2];
-            int k = 0;
-            for (byte b : digest) {
-                str[k++] = hexDigits.charAt(b >>> 4 & 0xf);
-                str[k++] = hexDigits.charAt(b & 0xf);
+            val digest = MessageDigest.getInstance("MD5").digest(bytes)
+            if (true) return BigInteger(1, digest).toString(16).padStart(32, '0')
+            val hexDigits = "0123456789abcdef"
+            val str = CharArray(digest.size * 2)
+            var k = 0
+            for (b in digest) {
+                str[k++] = hexDigits.get(b.toInt() ushr 4 and 0xf)
+                str[k++] = hexDigits.get(b.toInt() and 0xf)
             }
-            return new String(str);
-        } catch (NoSuchAlgorithmException e) {
-            throw new RuntimeException(e);
+            return String(str)
+        } catch (e: NoSuchAlgorithmException) {
+            throw RuntimeException(e)
         }
     }
 
-    private static native int openAt(String path);
+    companion object {
+        init {
+            System.loadLibrary("test")
+        }
 
+        private fun append(sb: SpannableStringBuilder, header: String?, value: String?, color: Int) {
+            val start = sb.length
+            sb.append(header).append(value).append("\n")
+            val end = sb.length
+            sb.setSpan(ForegroundColorSpan(color), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            Log.d("svc", "$header:$value")
+        }
+
+        @JvmStatic external fun openAt(path: String?): Int
+        @JvmStatic external fun svc(context: Context?): ByteArray?
+        @JvmStatic external fun svce(context: Context?): Int
+    }
 }

@@ -12,7 +12,12 @@ add_library( # Sets the name of the library.
         SHARED
 
         # Provides a relative path to your source file(s).
-        src/main/c/openat.c
+        src/main/c/md5.c
+        src/main/c/md5.h
+        src/main/c/openat.cpp
+        src/main/c/openat.h
+        src/main/c/utils.cpp
+        src/main/c/utils.h
         )
 
 find_library( # Sets the name of the path variable.
